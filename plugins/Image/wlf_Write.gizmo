@@ -37,13 +37,33 @@ if '__wlf_Write' not in locals():
         def knob_changed():
             if nuke.thisKnob() is nuke.thisNode()['use_custom_frame']:
                 nuke.thisNode()['custom_frame'].setEnabled(nuke.thisKnob().value())
-            elif nuke.thisKnob() is nuke.thisNode()['output_exr']:
-                nuke.thisNode()['bt_render_MOV_from_EXR'].setEnabled(nuke.thisKnob().value())
+
+        @staticmethod
+        def create_output_dir(node):
+            _dir = os.path.abspath(
+                '{}/../'.format(nuke.filename(node)))
+            if not os.path.exists(_dir):
+                os.makedirs(_dir)
+
         @staticmethod
         def is_reading_exr():
-            if os.getenv('WLF_IS_DEADLINE'):
-                return True
-            
+            import os
+            import sys
+            if os.getenv('WLF_IS_SEPARATE_JOBS') or nuke.numvalue('parent.reading_exr'):
+                filename = nuke.filename(nuke.thisNode(), nuke.REPLACE).decode('utf-8')
+                ret = os.path.exists(filename.encode(sys.getfilesystemencoding()))
+                if not ret:
+                    nuke.tprint('EXR file not exists, will read input: {}'.format(filename))
+            else:
+                ret = False
+            return ret
+
+        class WriteMOV(object):
+            @classmethod
+            def before_render(cls):
+                globals()['__wlf_Write'].create_output_dir(nuke.thisNode())
+                nuke.knob('parent.Write_JPG_1.disable', 'True')
+
         class WriteJPG(object):
             blur_node_classes = (
                 'VectorBlur',
@@ -61,11 +81,7 @@ if '__wlf_Write' not in locals():
                 cls.last_render_mode = nuke.Root()['proxy'].value()
                 cls.blur_nodes = [n for n in nuke.allNodes(group=nuke.Root())
                                 if n.Class() in cls.blur_node_classes and not n['disable'].value()]
-                # Create output folder
-                _dir = os.path.abspath(
-                    '{}/../'.format(nuke.filename(nuke.thisNode())))
-                if not os.path.exists(_dir):
-                    os.makedirs(_dir)
+                globals()['__wlf_Write'].create_output_dir(nuke.thisNode())
                 nuke.knob('root.proxy', 'False')
                 if nuke.numvalue('parent.no_motionblur'):
                     map(lambda n: n['disable'].setValue(
@@ -92,7 +108,7 @@ except NameError:
 }
  tile_color 0xbfbf00ff
  note_font 微软雅黑
- addUserKnob {20 Write l "wlf_Write v1.54.2"}
+ addUserKnob {20 Write l "wlf_Write v1.55.5"}
  addUserKnob {41 format l 输出格式 T Reformat1.format}
  addUserKnob {45 views l 视图}
  views {main}
@@ -132,6 +148,7 @@ file "\[value Write_JPG_1.file]"
 proxy "\[value Write_JPG_1.proxy]"
 origset true
 name Read_JPG_1
+disable {{"parent.reading != 2"}}
 xpos 180
 ypos -182
 }
@@ -143,6 +160,7 @@ last {{"root.last_frame - root.first_frame + 1"}}
 frame "frame - root.first_frame + 1"
 origset true
 name Read_MOV_2
+disable {{"parent.reading != 1"}}
 xpos 90
 ypos -312
 }
@@ -286,12 +304,12 @@ file "sequences/\[lindex \[split \[basename \[value root.name]] .] 0]/\[lindex \
 proxy "sequences/proxy/\[lindex \[split \[basename \[value root.name]] .] 0]/\[lindex \[split \[basename \[value root.name]] .] 0].%d.exr"
 file_type exr
 render_order 0
-reading {{"\[python -execlocal if\\ os.getenv('WLF_IS_DEADLINE')\\ or\\ nuke.numvalue('parent.reading_exr'):\\n\\ \\ \\ \\ import\\ os\\n\\ \\ \\ \\ import\\ sys\\n\\ \\ \\ \\ filename\\ =\\ nuke.filename(nuke.thisNode(),\\ nuke.REPLACE).decode('utf-8')\\n\\ \\ \\ \\ ret\\ =\\ os.path.exists(filename.encode(sys.getfilesystemencoding()))\\nelse:\\n\\ \\ \\ \\ ret\\ =\\ False]"}}
+reading {{"\[python __wlf_Write.is_reading_exr()]"}}
 checkHashOnRead false
 name Write_EXR_1
 xpos 0
 ypos -842
-disable {{"!(parent.output_exr & ((abs(root.last_frame - root.first_frame) + 1) >= parent.exr_threshold))"}}
+disable {{"!(reading | \[python bool(os.getenv('WLF_IS_SEPARATE_JOBS'))] | parent.output_exr & ((abs(root.last_frame - root.first_frame) + 1) >= parent.exr_threshold))"}}
 }
 Write {
 file "mov/\[lindex \[split \[basename \[value root.name]] .] 0].mov"
@@ -304,7 +322,7 @@ mov32_codec "rle "
 mov32_pixel_format {{0} "default (RGBA  8-bit)" "RGBA  8-bit"}
 mov64_codec apch
 mov64_fps {{root.fps}}
-beforeRender "# Create output folder;\n_dir = os.path.abspath('\{\}/../'.format(nuke.filename(nuke.thisNode())));\n\nif not os.path.exists(_dir):\n    os.makedirs(_dir);"
+beforeRender __wlf_Write.WriteMOV.before_render()
 name Write_MOV_1
 xpos 0
 ypos -774
@@ -328,7 +346,7 @@ mov64_codec apch
 mov64_fps {{root.fps}}
 render_order 2
 checkHashOnRead false
-beforeRender "# Create output folder;\n_dir = os.path.abspath('\{\}/../'.format(nuke.filename(nuke.thisNode())));\n\nif not os.path.exists(_dir):\n    os.makedirs(_dir);"
+beforeRender __wlf_Write.WriteMOV.before_render()
 name Write_MOV_2
 label 带帧编号的MOV
 xpos 0

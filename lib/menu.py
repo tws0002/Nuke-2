@@ -6,28 +6,39 @@ from __future__ import absolute_import
 
 def main():
     import gui
-    import dropdata_handler
+    import dropdata
     import gizmo_convert
     import pref
     import project_settings
-    import pyblish_lite_nuke
-    import cgtwn
     import cgtwq
     import enable_later
     import asset
+    import patch.toolsets
+
+    def _setup_cgtw():
+
+        client = cgtwq.DesktopClient()
+        if not client.executable():
+            return
+
+        import cgtwn
+        import pyblish_lite_nuke
+
+        client.start()
+        pyblish_lite_nuke.setup()
+        cgtwn.setup()
+        if client.is_logged_in():
+            client.connect()
 
     gui.setup()
     pref.setup()
-    dropdata_handler.setup()
+    dropdata.setup()
     gizmo_convert.setup()
     project_settings.setup()
-    pyblish_lite_nuke.setup()
     enable_later.setup()
-    cgtwn.setup()
-    cgtwq.DesktopClient.start()
     asset.setup()
-    if cgtwq.DesktopClient.is_logged_in():
-        cgtwq.update_setting()
+
+    patch.toolsets.enable()
 
 
 if __name__ == '__main__':

@@ -14,6 +14,7 @@ import cgtwq
 import scripttools
 from cgtwn import Task
 from node import wlf_write_node
+from wlf.codectools import get_unicode as u
 from wlf.fileutil import copy
 from wlf.path import PurePath
 
@@ -45,8 +46,9 @@ class CollectTask(pyblish.api.InstancePlugin):
 
         assert isinstance(instance, pyblish.api.Instance)
 
-        if cgtwq.DesktopClient.is_logged_in():
-            cgtwq.update_setting()
+        client = cgtwq.DesktopClient()
+        if client.is_logged_in():
+            client.connect()
 
         shot = PurePath(instance.name).shot
         try:
@@ -56,6 +58,13 @@ class CollectTask(pyblish.api.InstancePlugin):
             self.log.error('无法在数据库中找到对应任务: %s', shot)
             raise
         self.log.info('任务 %s', task)
+
+        try:
+            instance.context.data['workfileFileboxInfo'] = \
+                task.filebox.get('workfile')
+        except:
+            self.log.error('找不到标识为workfile的文件框 请联系管理员进行设置')
+            raise
 
 
 class CollectUser(pyblish.api.ContextPlugin):
@@ -68,10 +77,10 @@ class CollectUser(pyblish.api.ContextPlugin):
         assert isinstance(context, pyblish.api.Context)
 
         name = cgtwq.ACCOUNT.select(
-            cgtwq.current_account_id()).to_entry()['name']
+            cgtwq.get_account_id()).to_entry()['name']
 
         context.data['artist'] = name
-        context.data['accountID'] = cgtwq.current_account_id()
+        context.data['accountID'] = cgtwq.get_account_id()
         context.create_instance(
             '制作者: {}'.format(name),
             family='制作者'
@@ -184,24 +193,36 @@ class VadiateFPS(TaskMixin, pyblish.api.InstancePlugin):
                 raise ValueError('Not same fps', fps, current_fps)
 
 
+class UploadPrecompFile(TaskMixin, pyblish.api.InstancePlugin):
+    """上传相关预合成文件至CGTeamWork.   """
+
+    order = pyblish.api.IntegratorOrder
+    label = '上传预合成文件'
+    families = ['Nuke文件']
+
+    def process(self, instance):
+        assert isinstance(instance, pyblish.api.Instance)
+        dest = instance.context.data['workfileFileboxInfo'].path + '/'
+
+        for n in nuke.allNodes('Precomp'):
+            src = u(nuke.filename(n))
+            if src.startswith(dest.replace('\\', '/')):
+                continue
+            n['file'].setValue(copy(src, dest))
+        nuke.scriptSave()
+
+
 class UploadWorkFile(TaskMixin, pyblish.api.InstancePlugin):
     """上传工作文件至CGTeamWork.   """
 
-    order = pyblish.api.IntegratorOrder
+    order = pyblish.api.IntegratorOrder + 0.1
     label = '上传工作文件'
     families = ['Nuke文件']
 
     def process(self, instance):
         assert isinstance(instance, pyblish.api.Instance)
+        dest = instance.context.data['workfileFileboxInfo'].path + '/'
         workfile = instance.data['name']
-        task = self.get_task(instance.context)
-        assert isinstance(task, Task)
-        try:
-            dest = task.filebox.get('workfile').path + '/'
-        except:
-            self.log.error('找不到标识为workfile的文件框 请联系管理员进行设置')
-            raise
-        # dest = 'E:/test_pyblish/'
 
         copy(workfile, dest)
 
@@ -214,14 +235,48 @@ class UploadJPG(TaskMixin, pyblish.api.InstancePlugin):
     families = ['Nuke文件']
 
     def process(self, instance):
-        task = self.get_task(instance.context)
+        context = instance.context
+        task = self.get_task(context)
         assert isinstance(task, Task)
 
         n = wlf_write_node()
-        path = nuke.filename(n.node('Write_JPG_1'))
+        path = u(nuke.filename(n.node('Write_JPG_1')))
         dest = task.filebox.get('image').path + '/{}.jpg'.format(task.shot)
         # dest = 'E:/test_pyblish/{}.jpg'.format(task.shot)
         copy(path, dest)
-        task.set_image(dest)
-        if task['leader_status'] == 'Wait':
-            task['leader_status'] = 'Check'
+
+        context.data['submitImage'] = task.set_image(dest)
+
+
+class SubmitTask(TaskMixin, pyblish.api.ContextPlugin):
+    """在CGTeamWork上提交任务.   """
+
+    order = pyblish.api.IntegratorOrder + 0.1
+    label = '提交任务'
+
+    def process(self, context):
+        task = self.get_task(context)
+        assert isinstance(task, Task)
+
+        if task['leader_status'] == 'Check':
+            self.log.info('任务已经是检查状态, 无需提交。')
+            return
+
+        note = nuke.getInput(
+            'CGTeamWork任务提交备注(Cancel则不提交)'.encode('utf-8'), '')
+
+        if note is None:
+            self.log.info('用户选择不提交任务。')
+            return
+        note = u(note)
+
+        message = cgtwq.Message(note)
+        filenames = []
+        submit_image = context.data.get('submitImage')
+        if submit_image:
+            filenames.append(submit_image.path)
+            message.images.append(submit_image)
+
+        task.flow.submit(
+            filenames=filenames,
+            message=message)

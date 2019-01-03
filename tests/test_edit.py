@@ -3,13 +3,12 @@
 
 from __future__ import absolute_import, print_function, unicode_literals
 
-import os
 import random
-import sys
-import tempfile
 from unittest import TestCase, main
 
 import nuke
+
+import edit
 
 
 class EditTestCase(TestCase):
@@ -98,7 +97,7 @@ class EditTestCase(TestCase):
             self.assertIs(i.input(0), noop)
 
         self.assertRaises(TypeError, replace_node, noop, 1)
-        self.assertRaises(TypeError, replace_node, 1, noop)
+        self.assertRaises(AttributeError, replace_node, 1, noop)
 
     def test_get_min_max(self):
         from edit import get_min_max
@@ -291,6 +290,51 @@ class EditTestCase(TestCase):
 
     def tearDown(self):
         nuke.scriptClear(True)
+
+
+def test_remove_duplicated_read():
+    nuke.scriptClear(True)
+    nodes = [nuke.nodes.Read(file=b'dummy file',) for _ in xrange(10)]
+    downstream_nodes = [nuke.nodes.NoOp(inputs=[n]) for n in nodes]
+    assert len(nuke.allNodes('Read')) == 10
+    assert not nuke.allNodes('Dot')
+    edit.remove_duplicated_read()
+    assert len(nuke.allNodes('Read')) == 1
+    assert len(nuke.allNodes('Dot')) == 9
+    for n in downstream_nodes:
+        assert n.input(0).Class() in ('Read', 'Dot')
+
+
+def test_glow_no_mask():
+    nuke.scriptClear(True)
+    mask_channel = 'red'
+    width_channel = 'blue'
+    temp_channel = 'mask.a'
+    n = nuke.nodes.Glow2(
+        inputs=(None, nuke.nodes.Constant()),
+        W=width_channel, maskChannelMask=mask_channel)
+    edit.best_practice.glow_no_mask(temp_channel)
+    assert n['W'].value() == temp_channel
+    assert n['mask'].value() == 'none'
+    assert n.input(1) is None
+    n = n.input(0)
+    assert n.Class() == 'ChannelMerge'
+    assert n['A'].value() == temp_channel
+    assert n['operation'].value() == 'in'
+    assert n['B'].value() == width_channel
+    n = n.input(0)
+    assert n.Class() == 'Copy'
+    assert n['from0'].value() == mask_channel
+    assert n['to0'].value() == temp_channel
+
+
+def test_delete_unused_node():
+    nuke.scriptClear(True)
+    _ = [nuke.nodes.NoOp() for _ in xrange(10)]
+    n = nuke.nodes.NoOp(name='_test')
+    assert len(nuke.allNodes()) == 11
+    edit.delete_unused_nodes()
+    assert nuke.allNodes() == [n]
 
 
 if __name__ == '__main__':

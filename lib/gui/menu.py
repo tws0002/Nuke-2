@@ -12,6 +12,7 @@ import nukescripts  # pylint: disable=import-error
 
 import asset
 import cgtwn_panels
+import cgtwq
 import comp
 import comp.panels
 import edit
@@ -54,7 +55,6 @@ def add_menu():
             RESOURCE_DIR, 'Documentation/build/html/index.html')
         webbrowser.open(help_page)
 
-    cgtw_menu = _('CGTeamWork', icon='cgteamwork.png')
     all_menu = [
         {_('编辑'): [
             _('同时编辑多个节点', lambda: edit_panels.MultiEdit().show(), 'F2'),
@@ -84,12 +84,18 @@ def add_menu():
             _("检查素材更新", lambda: asset.warn_mtime(show_ok=True)),
             _("转换单帧为序列",
               edit.replace_sequence),
+            {_('最佳实践'): [
+                _("清理无用节点",
+                  lambda: edit.delete_unused_nodes(message=True)),
+                _("合并重复读取节点",
+                  edit.remove_duplicated_read),
+                _("Glow节点不使用mask",
+                  edit.best_practice.glow_no_mask)
+            ]},
             {_('整理'): [
                 _("整理所选节点(竖式摆放)",
                   lambda: orgnize.autoplace(nuke.selectedNodes()),
                   "L", shortcutContext=DAG_CONTEXT),
-                _("清理无用节点",
-                  lambda: edit.delete_unused_nodes(message=True)),
                 _("所有Gizmo转Group",
                   edit.all_gizmo_to_group),
                 _("根据背板重命名所有节点",
@@ -98,8 +104,7 @@ def add_menu():
                   lambda: orgnize.nodes_add_dots(nuke.selectedNodes())),
                 _("所有节点添加Dots变成90度",
                   lambda: orgnize.nodes_add_dots(nuke.allNodes()))
-            ]
-            }
+            ]}
         ]},
         {_('合成'): [
             _('自动合成', _autocomp, icon='autocomp.png'),
@@ -113,15 +118,9 @@ def add_menu():
               shortcutContext=DAG_CONTEXT,
               icon='autocomp.png')
         ]},
-        {cgtw_menu: [
-            _('登录', cgtwn_panels.dialog_login),
-            _('创建项目文件夹', cgtwn_panels.dialog_create_dirs)
-        ]},
         {_('工具'): [
             _('批量自动合成', lambda: comp.panels.BatchCompPanel().showModalDialog(),
               icon='autocomp.png'),
-            _('上传mov', lambda: nukescripts.panels.restorePanel(
-                'com.wlf.uploader')),
             _('扫描空文件夹', scanner.call_from_nuke),
             _('分离exr', splitexr.Dialog.show),
             _("分割当前文件(根据背板)", orgnize.split_by_backdrop)
@@ -131,6 +130,25 @@ def add_menu():
             _("吾立方网站", lambda: webbrowser.open('http://www.wlf-studio.com/'))
         ]}
     ]
+    if cgtwq.DesktopClient().executable():
+        all_menu.insert(
+            -2,
+            {_('CGTeamWork', icon='cgteamwork.png'): [
+                _('登录', cgtwn_panels.dialog_login),
+                _('创建项目文件夹', cgtwn_panels.dialog_create_dirs),
+                _('上传工具', lambda: nukescripts.panels.restorePanel(
+                    'com.wlf.uploader')),
+            ]}
+        )
+
+    if getattr(nuke, 'startPerformanceTimers'):
+        all_menu.insert(
+            -1,
+            {_('性能监控'): [
+                _('开始', nuke.startPerformanceTimers),
+                _('结束', nuke.stopPerformanceTimers),
+                _('重置', nuke.resetPerformanceTimers),
+            ], })
 
     # Add all menu.
     def _add_menu(menu, parent=nuke.menu("Nuke")):
@@ -163,36 +181,6 @@ def add_menu():
     m = m.addMenu('吾立方'.encode('utf-8'), icon='Modify.png')
     create_menu_by_dir(m, os.path.abspath(
         os.path.join(__file__, _plugin_path)))
-
-    # Enhance 'ToolSets' menu.
-    def _create_shared_toolsets():
-        if not nuke.selectedNodes():
-            nuke.message(utf8('未选中任何节点,不能创建工具集'))
-            return
-        filename = nuke.getInput('ToolSet name')
-        if filename:
-            nuke.createToolset(filename=os.path.join(
-                'Shared', filename), rootPath=RESOURCE_DIR)
-        _refresh_toolsets_menu()
-
-    def _refresh_toolsets_menu():
-        """Extended nuke function.  """
-
-        nukescripts.toolsets._refreshToolsetsMenu()  # pylint: disable=protected-access
-        m = nuke.menu('Nodes').addMenu('ToolSets')
-        m.addCommand('刷新'.encode('utf-8'), _refresh_toolsets_menu)
-        m.addCommand(
-            '创建共享工具集'.encode('utf-8'), _create_shared_toolsets)
-        m.addCommand(
-            '打开共享工具集文件夹'.encode('utf-8'),
-            lambda: webbrowser.open(
-                os.path.join(RESOURCE_DIR, 'ToolSets/Shared')))
-
-    if not getattr(nukescripts.toolsets, '_refreshToolsetsMenu', None):
-        setattr(nukescripts.toolsets, '_refreshToolsetsMenu',
-                nukescripts.toolsets.refreshToolsetsMenu)
-    _refresh_toolsets_menu()
-    nukescripts.toolsets.refreshToolsetsMenu = _refresh_toolsets_menu
 
 
 def create_menu_by_dir(parent, dir_):
